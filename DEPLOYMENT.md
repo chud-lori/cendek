@@ -7,7 +7,7 @@ The examples use generic placeholders:
 - domain: `cendek.example.com`
 - app user: `cendek`
 - install directory: `/opt/cendek`
-- local app address: `127.0.0.1:8080`
+- local app address: `127.0.0.1:1234`
 
 Replace those values with your own.
 
@@ -78,6 +78,8 @@ sudo test -f /opt/cendek/links.tsv || sudo mv /tmp/links.example.tsv /opt/cendek
 sudo chown -R cendek:cendek /opt/cendek
 sudo chmod 755 /opt/cendek/cendek
 ```
+
+The release archive includes `links.example.tsv` only. Your real `/opt/cendek/links.tsv` stays on the server and is not overwritten by later deploys.
 
 If the repository is private, use a GitHub token with release read access:
 
@@ -165,7 +167,8 @@ target/aarch64-unknown-linux-musl/release/cendek
 
 Create `/etc/systemd/system/cendek.service`:
 
-```ini
+```sh
+sudo tee /etc/systemd/system/cendek.service >/dev/null <<'EOF'
 [Unit]
 Description=cendek URL shortener
 After=network-online.target
@@ -176,7 +179,7 @@ Type=simple
 User=cendek
 Group=cendek
 WorkingDirectory=/opt/cendek
-ExecStart=/opt/cendek/cendek --addr 127.0.0.1:8080 --links /opt/cendek/links.tsv
+ExecStart=/opt/cendek/cendek --addr 127.0.0.1:1234 --links /opt/cendek/links.tsv
 Restart=on-failure
 RestartSec=2
 
@@ -188,6 +191,7 @@ ReadWritePaths=/opt/cendek
 
 [Install]
 WantedBy=multi-user.target
+EOF
 ```
 
 Enable and start:
@@ -201,7 +205,7 @@ sudo systemctl status cendek
 Check the app locally:
 
 ```sh
-curl -I http://127.0.0.1:8080/healthz
+curl -I http://127.0.0.1:1234/healthz
 ```
 
 ## 7. nginx
@@ -214,7 +218,7 @@ server {
     server_name cendek.example.com;
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:1234;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -242,19 +246,47 @@ sudo certbot --nginx -d cendek.example.com
 
 If TLS is terminated by a CDN or load balancer, configure HTTPS there and keep nginx bound to the local server as needed.
 
-## 9. Add Links
+## 9. Add or Change Links
 
-Edit `/opt/cendek/links.tsv`:
+Edit `/opt/cendek/links.tsv` on the server:
+
+```sh
+sudo nano /opt/cendek/links.tsv
+```
+
+Each line uses this format:
+
+```text
+slug<TAB>target_url
+```
+
+Example:
 
 ```text
 app	https://app.example.com/
 docs	https://docs.example.com/
+repo	https://git.example.com/project
 ```
 
-Restart the service:
+The separator must be a real tab. Spaces are not accepted.
+
+After changing links, restart the service because `cendek` loads `links.tsv` at startup:
 
 ```sh
 sudo systemctl restart cendek
+```
+
+Verify one short link:
+
+```sh
+curl -I http://127.0.0.1:1234/app
+```
+
+Expected result:
+
+```text
+HTTP/1.1 302 Found
+location: https://app.example.com/
 ```
 
 ## 10. Verify
