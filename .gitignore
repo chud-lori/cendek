@@ -1,0 +1,13 @@
+/target/
+
+# Local runtime data
+/links.local.tsv
+*.log
+*.pid
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
