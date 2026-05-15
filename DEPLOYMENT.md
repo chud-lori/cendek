@@ -74,6 +74,12 @@ cd /tmp && sha256sum -c cendek.tar.gz.sha256
 tar -xzf /tmp/cendek.tar.gz -C /tmp
 ```
 
+If an older release checksum contains a `dist/` path, verify it with:
+
+```sh
+cd /tmp && sed 's#dist/##' cendek.tar.gz.sha256 | sha256sum -c -
+```
+
 Install it:
 
 ```sh

@@ -39,8 +39,8 @@ jobs:
           cp "target/$TARGET/release/$BIN_NAME" "dist/$BIN_NAME"
           cp links.example.tsv dist/links.example.tsv
           tar -C dist -czf "dist/$BIN_NAME-$TARGET.tar.gz" "$BIN_NAME" links.example.tsv
-          sha256sum "dist/$BIN_NAME-$TARGET.tar.gz" > "dist/$BIN_NAME-$TARGET.tar.gz.sha256"
-          sha256sum "dist/$BIN_NAME" > "dist/$BIN_NAME-$TARGET.sha256"
+          (cd dist && sha256sum "$BIN_NAME-$TARGET.tar.gz" > "$BIN_NAME-$TARGET.tar.gz.sha256")
+          (cd dist && sha256sum "$BIN_NAME" > "$BIN_NAME-$TARGET.sha256")
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
