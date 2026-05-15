@@ -52,7 +52,7 @@ GitHub Actions will build the Linux x86_64 binary and attach release assets.
 On the server, download the latest release archive:
 
 ```sh
-REPO="owner/repo"
+REPO="chud-lori/cendek"
 VERSION="v0.1.0"
 ASSET="cendek-x86_64-unknown-linux-musl.tar.gz"
 
@@ -63,7 +63,7 @@ tar -xzf /tmp/cendek.tar.gz -C /tmp
 Or download the latest release without pinning a version:
 
 ```sh
-REPO="owner/repo"
+REPO="chud-lori/cendek"
 ASSET="cendek-x86_64-unknown-linux-musl.tar.gz"
 
 curl -fL "https://github.com/${REPO}/releases/latest/download/${ASSET}" -o /tmp/cendek.tar.gz
