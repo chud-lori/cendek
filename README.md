@@ -71,6 +71,18 @@ Deploy only the binary and `links.tsv` to the server.
 /robots.txt robots file
 ```
 
+`/api/links` returns each short link and destination:
+
+```json
+[
+  {
+    "slug": "app",
+    "url": "https://cendek.example.com/app",
+    "target": "https://app.example.com/"
+  }
+]
+```
+
 ## Deployment
 
 See `DEPLOYMENT.md` for an nginx and systemd setup.

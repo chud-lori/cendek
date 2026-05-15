@@ -57,6 +57,8 @@ VERSION="v0.1.0"
 ASSET="cendek-x86_64-unknown-linux-musl.tar.gz"
 
 curl -fL "https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}" -o /tmp/cendek.tar.gz
+curl -fL "https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}.sha256" -o /tmp/cendek.tar.gz.sha256
+cd /tmp && sha256sum -c cendek.tar.gz.sha256
 tar -xzf /tmp/cendek.tar.gz -C /tmp
 ```
 
@@ -67,6 +69,8 @@ REPO="chud-lori/cendek"
 ASSET="cendek-x86_64-unknown-linux-musl.tar.gz"
 
 curl -fL "https://github.com/${REPO}/releases/latest/download/${ASSET}" -o /tmp/cendek.tar.gz
+curl -fL "https://github.com/${REPO}/releases/latest/download/${ASSET}.sha256" -o /tmp/cendek.tar.gz.sha256
+cd /tmp && sha256sum -c cendek.tar.gz.sha256
 tar -xzf /tmp/cendek.tar.gz -C /tmp
 ```
 
@@ -295,4 +299,16 @@ location: https://app.example.com/
 curl -I https://cendek.example.com/app
 curl https://cendek.example.com/api/links
 curl https://cendek.example.com/healthz
+```
+
+`/api/links` returns both the short URL and destination URL:
+
+```json
+[
+  {
+    "slug": "app",
+    "url": "https://cendek.example.com/app",
+    "target": "https://app.example.com/"
+  }
+]
 ```

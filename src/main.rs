@@ -5,10 +5,13 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:8080";
 const DEFAULT_LINKS_PATH: &str = "links.tsv";
 const MAX_REQUEST_LINE: usize = 8192;
+const MAX_HEADER_BYTES: usize = 16 * 1024;
+const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 type Links = Arc<HashMap<String, String>>;
 
@@ -171,37 +174,59 @@ fn validate_slug(slug: &str) -> Result<(), &'static str> {
 }
 
 fn is_supported_target(target: &str) -> bool {
+    if target.bytes().any(|b| b.is_ascii_control()) {
+        return false;
+    }
+
     target.starts_with("https://") || target.starts_with("http://") || target.starts_with("mailto:")
 }
 
 fn handle_connection(mut stream: TcpStream, links: Links) -> io::Result<()> {
+    stream.set_read_timeout(Some(IO_TIMEOUT))?;
+    stream.set_write_timeout(Some(IO_TIMEOUT))?;
+
     let peer = stream.peer_addr().ok();
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
     reader.read_line(&mut request_line)?;
 
     if request_line.len() > MAX_REQUEST_LINE {
-        return write_response(&mut stream, 414, "URI Too Long", &plain_headers(), "uri too long\n");
+        return write_response(
+            &mut stream,
+            414,
+            "URI Too Long",
+            &plain_headers(),
+            "uri too long\n",
+        );
     }
 
     let Some(request) = parse_request_line(&request_line) else {
-        return write_response(&mut stream, 400, "Bad Request", &plain_headers(), "bad request\n");
+        return write_response(
+            &mut stream,
+            400,
+            "Bad Request",
+            &plain_headers(),
+            "bad request\n",
+        );
     };
 
-    drain_headers(&mut reader)?;
+    let headers = read_headers(&mut reader)?;
 
     if request.method != "GET" && request.method != "HEAD" {
         return write_response(
             &mut stream,
             405,
             "Method Not Allowed",
-            &[("content-type", "text/plain; charset=utf-8"), ("allow", "GET, HEAD")],
+            &[
+                ("content-type", "text/plain; charset=utf-8"),
+                ("allow", "GET, HEAD"),
+            ],
             "method not allowed\n",
         );
     }
 
     let body_allowed = request.method == "GET";
-    let response = route(&request.path, &links);
+    let response = route(&request.path, &links, &headers);
     write_http(&mut stream, response, body_allowed)?;
 
     if let Some(peer) = peer {
@@ -234,14 +259,42 @@ fn parse_request_line(line: &str) -> Option<Request<'_>> {
     Some(Request { method, path })
 }
 
-fn drain_headers(reader: &mut BufReader<TcpStream>) -> io::Result<()> {
+#[derive(Default)]
+struct HeaderInfo {
+    host: Option<String>,
+    forwarded_proto: Option<String>,
+}
+
+fn read_headers(reader: &mut BufReader<TcpStream>) -> io::Result<HeaderInfo> {
     let mut line = String::new();
+    let mut info = HeaderInfo::default();
+    let mut total_bytes = 0;
 
     loop {
         line.clear();
         let bytes = reader.read_line(&mut line)?;
+        total_bytes += bytes;
+
+        if total_bytes > MAX_HEADER_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "request headers are too large",
+            ));
+        }
+
         if bytes == 0 || line == "\r\n" || line == "\n" {
-            return Ok(());
+            return Ok(info);
+        }
+
+        if let Some((name, value)) = line.split_once(':') {
+            let name = name.trim();
+            let value = value.trim();
+
+            if name.eq_ignore_ascii_case("host") {
+                info.host = Some(value.to_string());
+            } else if name.eq_ignore_ascii_case("x-forwarded-proto") {
+                info.forwarded_proto = Some(value.to_string());
+            }
         }
     }
 }
@@ -256,7 +309,7 @@ enum Response {
     },
 }
 
-fn route(path: &str, links: &HashMap<String, String>) -> Response {
+fn route(path: &str, links: &HashMap<String, String>, headers: &HeaderInfo) -> Response {
     match path {
         "/" => Response::Text {
             status: 200,
@@ -279,7 +332,7 @@ fn route(path: &str, links: &HashMap<String, String>) -> Response {
         "/api/links" => Response::Text {
             status: 200,
             reason: "OK",
-            body: render_json(links),
+            body: render_json(links, public_base_url(headers)),
             content_type: "application/json; charset=utf-8",
         },
         _ => {
@@ -380,16 +433,42 @@ fn render_index(links: &HashMap<String, String>) -> String {
     )
 }
 
-fn render_json(links: &HashMap<String, String>) -> String {
+fn public_base_url(headers: &HeaderInfo) -> String {
+    let proto = headers
+        .forwarded_proto
+        .as_deref()
+        .filter(|value| *value == "http" || *value == "https")
+        .unwrap_or("http");
+    let host = headers
+        .host
+        .as_deref()
+        .filter(|value| is_safe_host(value))
+        .unwrap_or("127.0.0.1");
+
+    format!("{proto}://{host}")
+}
+
+fn is_safe_host(host: &str) -> bool {
+    if host.is_empty() || host.len() > 253 {
+        return false;
+    }
+
+    host.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':' | b'[' | b']'))
+}
+
+fn render_json(links: &HashMap<String, String>, base_url: String) -> String {
     let mut entries: Vec<_> = links.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));
 
     let items = entries
         .into_iter()
         .map(|(slug, target)| {
+            let short_url = format!("{}/{}", base_url.trim_end_matches('/'), slug);
             format!(
-                "{{\"slug\":\"{}\",\"target\":\"{}\"}}",
+                "{{\"slug\":\"{}\",\"url\":\"{}\",\"target\":\"{}\"}}",
                 escape_json(slug),
+                escape_json(&short_url),
                 escape_json(target)
             )
         })
@@ -426,4 +505,42 @@ fn escape_json(value: &str) -> String {
     }
 
     escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_control_characters_in_targets() {
+        assert!(is_supported_target("https://example.com/path"));
+        assert!(is_supported_target("mailto:user@example.com"));
+        assert!(!is_supported_target("https://example.com/\r\nx: y"));
+        assert!(!is_supported_target("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn validates_hosts_used_for_public_api_urls() {
+        assert!(is_safe_host("cendek.example.com"));
+        assert!(is_safe_host("127.0.0.1:1234"));
+        assert!(is_safe_host("[::1]:1234"));
+        assert!(!is_safe_host(""));
+        assert!(!is_safe_host("example.com\r\nx: y"));
+        assert!(!is_safe_host("example.com/path"));
+    }
+
+    #[test]
+    fn api_json_includes_short_url_and_target() {
+        let links = HashMap::from([("app".to_string(), "https://app.example.com/".to_string())]);
+        let headers = HeaderInfo {
+            host: Some("cendek.example.com".to_string()),
+            forwarded_proto: Some("https".to_string()),
+        };
+
+        let json = render_json(&links, public_base_url(&headers));
+
+        assert!(json.contains("\"slug\":\"app\""));
+        assert!(json.contains("\"url\":\"https://cendek.example.com/app\""));
+        assert!(json.contains("\"target\":\"https://app.example.com/\""));
+    }
 }
