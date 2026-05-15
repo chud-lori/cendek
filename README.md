@@ -13,6 +13,12 @@ It is intentionally dependency-free:
 
 ## Links
 
+Create `links.tsv` from the example file:
+
+```sh
+cp links.example.tsv links.tsv
+```
+
 Edit `links.tsv`:
 
 ```text

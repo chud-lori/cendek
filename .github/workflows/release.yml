@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: cendek
+  TARGET: x86_64-unknown-linux-musl
+
+jobs:
+  linux:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust target
+        run: rustup target add "$TARGET"
+
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target "$TARGET"
+
+      - name: Package
+        run: |
+          set -eu
+          mkdir -p dist
+          cp "target/$TARGET/release/$BIN_NAME" "dist/$BIN_NAME"
+          cp links.example.tsv dist/links.example.tsv
+          tar -C dist -czf "dist/$BIN_NAME-$TARGET.tar.gz" "$BIN_NAME" links.example.tsv
+          sha256sum "dist/$BIN_NAME-$TARGET.tar.gz" > "dist/$BIN_NAME-$TARGET.tar.gz.sha256"
+          sha256sum "dist/$BIN_NAME" > "dist/$BIN_NAME-$TARGET.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cendek-linux-x86_64
+          path: |
+            dist/cendek
+            dist/cendek-x86_64-unknown-linux-musl.tar.gz
+            dist/cendek-x86_64-unknown-linux-musl.tar.gz.sha256
+            dist/cendek-x86_64-unknown-linux-musl.sha256
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --clobber \
+              "dist/$BIN_NAME" \
+              "dist/$BIN_NAME-$TARGET.tar.gz" \
+              "dist/$BIN_NAME-$TARGET.tar.gz.sha256" \
+              "dist/$BIN_NAME-$TARGET.sha256"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "Linux x86_64 release for cendek." \
+              "dist/$BIN_NAME" \
+              "dist/$BIN_NAME-$TARGET.tar.gz" \
+              "dist/$BIN_NAME-$TARGET.tar.gz.sha256" \
+              "dist/$BIN_NAME-$TARGET.sha256"
+          fi

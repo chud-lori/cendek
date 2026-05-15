@@ -4,14 +4,91 @@ This guide deploys `cendek` behind nginx on a Linux server.
 
 The examples use generic placeholders:
 
-- domain: `short.example.com`
+- domain: `cendek.example.com`
 - app user: `cendek`
 - install directory: `/opt/cendek`
 - local app address: `127.0.0.1:8080`
 
 Replace those values with your own.
 
-## 1. Build
+## 1. Choose a Build Method
+
+If your local machine and server use different operating systems, do not upload the normal local build.
+
+For example:
+
+```text
+Apple Silicon macOS build  -> runs on macOS only
+Ubuntu server              -> needs a Linux binary
+```
+
+Use one of these methods. In all cases, create the service user first.
+
+## 2. Create Service User
+
+Create the service user and install directory:
+
+```sh
+sudo useradd --system --home /opt/cendek --shell /usr/sbin/nologin cendek
+sudo mkdir -p /opt/cendek
+sudo chown -R cendek:cendek /opt/cendek
+```
+
+If the user already exists, that is fine. Continue with the remaining commands.
+
+## 3. Option A: Download a GitHub Release Binary
+
+This is the smallest server setup. The server needs only `curl`, `tar`, and systemd/nginx.
+
+Create a release from your local machine:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub Actions will build the Linux x86_64 binary and attach release assets.
+
+On the server, download the latest release archive:
+
+```sh
+REPO="owner/repo"
+VERSION="v0.1.0"
+ASSET="cendek-x86_64-unknown-linux-musl.tar.gz"
+
+curl -fL "https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}" -o /tmp/cendek.tar.gz
+tar -xzf /tmp/cendek.tar.gz -C /tmp
+```
+
+Or download the latest release without pinning a version:
+
+```sh
+REPO="owner/repo"
+ASSET="cendek-x86_64-unknown-linux-musl.tar.gz"
+
+curl -fL "https://github.com/${REPO}/releases/latest/download/${ASSET}" -o /tmp/cendek.tar.gz
+tar -xzf /tmp/cendek.tar.gz -C /tmp
+```
+
+Install it:
+
+```sh
+sudo mv /tmp/cendek /opt/cendek/cendek
+sudo test -f /opt/cendek/links.tsv || sudo mv /tmp/links.example.tsv /opt/cendek/links.tsv
+sudo chown -R cendek:cendek /opt/cendek
+sudo chmod 755 /opt/cendek/cendek
+```
+
+If the repository is private, use a GitHub token with release read access:
+
+```sh
+curl -fL \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  "https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}" \
+  -o /tmp/cendek.tar.gz
+```
+
+## 4. Option B: Build on the Ubuntu Server
 
 Build on the server:
 
@@ -21,19 +98,9 @@ cd /opt/cendek-src
 cargo build --release
 ```
 
-Or build locally and upload only:
-
-```text
-target/release/cendek
-links.tsv
-```
-
-## 2. Install Files
-
-Create a service user and install directory:
+Then install:
 
 ```sh
-sudo useradd --system --home /opt/cendek --shell /usr/sbin/nologin cendek
 sudo mkdir -p /opt/cendek
 sudo cp target/release/cendek /opt/cendek/cendek
 sudo cp links.tsv /opt/cendek/links.tsv
@@ -41,7 +108,60 @@ sudo chown -R cendek:cendek /opt/cendek
 sudo chmod 755 /opt/cendek/cendek
 ```
 
-## 3. systemd
+This is simple, but the server needs Rust, Cargo, and git.
+
+## 5. Option C: Cross-Compile Locally, Upload Binary Only
+
+This keeps the server smaller because it does not need Rust or source code.
+
+Install `cross` locally:
+
+```sh
+cargo install cross
+```
+
+For a normal Intel/AMD Ubuntu VPS:
+
+```sh
+cross build --release --target x86_64-unknown-linux-musl
+```
+
+For an ARM Ubuntu server:
+
+```sh
+cross build --release --target aarch64-unknown-linux-musl
+```
+
+Upload only the binary and link file:
+
+```text
+target/x86_64-unknown-linux-musl/release/cendek
+links.tsv
+```
+
+Example upload:
+
+```sh
+scp target/x86_64-unknown-linux-musl/release/cendek links.tsv user@server:/tmp/
+```
+
+Install on the server:
+
+```sh
+sudo mkdir -p /opt/cendek
+sudo mv /tmp/cendek /opt/cendek/cendek
+sudo mv /tmp/links.tsv /opt/cendek/links.tsv
+sudo chown -R cendek:cendek /opt/cendek
+sudo chmod 755 /opt/cendek/cendek
+```
+
+Use the `aarch64-unknown-linux-musl` path instead if your server is ARM:
+
+```text
+target/aarch64-unknown-linux-musl/release/cendek
+```
+
+## 6. systemd
 
 Create `/etc/systemd/system/cendek.service`:
 
@@ -84,14 +204,14 @@ Check the app locally:
 curl -I http://127.0.0.1:8080/healthz
 ```
 
-## 4. nginx
+## 7. nginx
 
 Create `/etc/nginx/sites-available/cendek`:
 
 ```nginx
 server {
     listen 80;
-    server_name short.example.com;
+    server_name cendek.example.com;
 
     location / {
         proxy_pass http://127.0.0.1:8080;
@@ -112,17 +232,17 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-## 5. HTTPS
+## 8. HTTPS
 
 If you use Certbot:
 
 ```sh
-sudo certbot --nginx -d short.example.com
+sudo certbot --nginx -d cendek.example.com
 ```
 
 If TLS is terminated by a CDN or load balancer, configure HTTPS there and keep nginx bound to the local server as needed.
 
-## 6. Add Links
+## 9. Add Links
 
 Edit `/opt/cendek/links.tsv`:
 
@@ -137,10 +257,10 @@ Restart the service:
 sudo systemctl restart cendek
 ```
 
-## 7. Verify
+## 10. Verify
 
 ```sh
-curl -I https://short.example.com/app
-curl https://short.example.com/api/links
-curl https://short.example.com/healthz
+curl -I https://cendek.example.com/app
+curl https://cendek.example.com/api/links
+curl https://cendek.example.com/healthz
 ```

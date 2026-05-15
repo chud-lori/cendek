@@ -1,6 +1,7 @@
 /target/
 
 # Local runtime data
+/links.tsv
 /links.local.tsv
 *.log
 *.pid
